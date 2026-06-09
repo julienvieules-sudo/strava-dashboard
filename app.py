@@ -34,6 +34,14 @@ def parser_date_francaise(date_str):
             break
     return pd.to_datetime(res, format="%d %m %Y %H:%M:%S", errors='coerce')
 
+# Fonction utilitaire pour convertir une allure décimale (ex: 5.5) en format texte (ex: 5:30 /km)
+def format_allure(allure_dec):
+    if np.isnan(allure_dec) or np.isinf(allure_dec):
+        return "--:--"
+    minutes = int(allure_dec)
+    secondes = int((allure_dec % 1) * 60)
+    return f"{minutes}:{secondes:02d} /km"
+
 # --- CHARGEMENT DU FICHIER CSV ---
 st.sidebar.header("📁 Importation des données")
 uploaded_file = st.sidebar.file_uploader("Glisse ton fichier 'activities.csv' ici :", type=["csv"])
@@ -42,7 +50,7 @@ if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file)
         
-        # Application du parseur de date robuste
+        # Application du parseur de date
         df['Date_Clean'] = df["Date de l'activité"].apply(parser_date_francaise)
         df = df.dropna(subset=['Date_Clean'])
         
@@ -53,7 +61,7 @@ if uploaded_file is not None:
             st.warning("Aucune activité de course à pied trouvée.")
             st.stop()
             
-        # Conversion des unités Strava
+        # Conversion des unités Strava (Utilisation des colonnes brutes du fichier)
         df['Distance_km'] = df['Distance.1'] / 1000
         df['Time_min'] = df['Durée de déplacement'] / 60
         df['Vitesse_kmh'] = df['Distance_km'] / (df['Time_min'] / 60)
@@ -64,23 +72,31 @@ if uploaded_file is not None:
         df['Année'] = df['Date_Clean'].dt.year.astype(str)
         df['Mois'] = df['Date_Clean'].dt.to_period('M').astype(str)
         
-        # --- CALCULS PHYSIOLOGIQUES PONDÉRÉS ET RÉALISTES ---
-        # Formule de modélisation basée sur l'effort moyen de tes sorties pour éviter les bugs GPS
+        # --- CALCULS PHYSIOLOGIQUES PONDÉRÉS ---
         df['VMA_Est'] = df['Vitesse_kmh'] / (1.09 - 0.065 * np.log(df['Distance_km'].clip(lower=1)))
-        
-        # Borner la VMA à des valeurs réalistes adaptées à ton profil
         df['VMA_Est'] = df['VMA_Est'].clip(10, 18.5)
         df['VMA_Lissée'] = df['VMA_Est'].rolling(window=7, min_periods=1).mean()
-        
-        # Calcul de la VO2 Max et du Seuil physiologiques cohérents
         df['VO2_Lissée'] = df['VMA_Lissée'] * 3.5
         df['Seuil_Lissé'] = df['VMA_Lissée'] * 0.82
 
-        # --- STATS PAR AN (Calculé sur 100% de tes runs maintenant !) ---
+        # --- STATS PAR AN (Avec calcul de l'allure moyenne par an) ---
         stats_an = df.groupby('Année').agg(
             Distance_Totale=('Distance_km', 'sum'),
-            Nombre_Sorties=("ID de l'activité", "count")
-        ).reset_index().sort_values('Année', ascending=False)
+            Nombre_Sorties=("ID de l'activité", "count"),
+            Temps_Total_Min=('Time_min', 'sum')
+        ).reset_index()
+        
+        # Calcul de l'allure annuelle moyenne : temps total / distance totale
+        stats_an['Allure_Dec_An'] = stats_an['Temps_Total_Min'] / stats_an['Distance_Totale']
+        stats_an['Allure moyenne'] = stats_an['Allure_Dec_An'].apply(format_allure)
+        
+        # Nettoyage et tri du tableau annuel
+        stats_an_affichage = stats_an[['Année', 'Distance_Totale', 'Nombre_Sorties', 'Allure moyenne']].copy()
+        stats_an_affichage = stats_an_affichage.sort_values('Année', ascending=False)
+        stats_an_affichage = stats_an_affichage.rename(columns={
+            'Distance_Totale': 'Distance accumulée (km)', 
+            'Nombre_Sorties': 'Nombre de runs'
+        })
 
         # --- EXTRACTEUR DE RECORDS (Formule de Riegel) ---
         def temps_au_format(minutes_totales):
@@ -99,7 +115,6 @@ if uploaded_file is not None:
             if not df_utiles.empty:
                 chronos_estimés = []
                 for _, row in df_utiles.iterrows():
-                    # Formule de Riegel pour projeter le temps sur la distance exacte du bloc
                     t_ajusté = row['Time_min'] * ((d_cible / row['Distance_km']) ** 1.06)
                     chronos_estimés.append(t_ajusté)
                 
@@ -130,15 +145,30 @@ if uploaded_file is not None:
 
         # --- TAB 1 : VOLUMES ---
         with tab1:
-            st.subheader("🏃‍♂️ Ton bilan global par Année (Complet)")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.dataframe(stats_an.rename(columns={'Distance_Totale': 'Distance accumulée (km)', 'Nombre_Sorties': 'Nombre de runs'}), use_container_width=True, hide_index=True)
-            with c2:
-                fig_an = px.bar(stats_an, x='Année', y='Distance_Totale', labels={'Distance_Totale': 'Distance (km)'}, title="Évolution annuelle (km)", color_discrete_sequence=['#FC4C02'])
+            st.subheader("🏃‍♂️ Vos statistiques globales historiques (Tout temps)")
+            c1, c2, c3, c4 = st.columns(4)
+            
+            # Totaux globaux
+            dist_totale = df['Distance_km'].sum()
+            runs_totaux = len(df)
+            temps_total_heures = df['Time_min'].sum() / 60
+            allure_globale_dec = df['Time_min'].sum() / dist_totale
+            
+            c1.metric("Distance Totale Cumulée", f"{dist_totale:,.1f} km".replace(",", " "))
+            c2.metric("Total de Sorties", f"{runs_totaux} runs")
+            c3.metric("Temps de Vol Total", f"{temps_total_heures:.1f} heures")
+            c4.metric("Allure Moyenne Globale", format_allure(allure_globale_dec))
+            
+            st.markdown("---")
+            st.subheader("📆 Bilan détaillé par Année")
+            col_table, col_graph = st.columns(2)
+            with col_table:
+                st.dataframe(stats_an_affichage, use_container_width=True, hide_index=True)
+            with col_graph:
+                fig_an = px.bar(stats_an, x='Année', y='Distance_Totale', labels={'Distance_Totale': 'Distance (km)'}, title="Volume annuel (km)", color_discrete_sequence=['#FC4C02'])
                 st.plotly_chart(fig_an, use_container_width=True)
                 
-            st.subheader("📆 Volume mensuel détaillé")
+            st.subheader("📆 Progression mensuelle")
             vol_mensuel = df.groupby('Mois')['Distance_km'].sum().reset_index()
             fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance_km', labels={'Distance_km': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'])
             st.plotly_chart(fig_vol, use_container_width=True)
@@ -152,7 +182,6 @@ if uploaded_file is not None:
         # --- TAB 3 : VMA & VO2 MAX ---
         with tab3:
             st.subheader("📈 Évolution de tes capacités physiologiques")
-            st.markdown("_Courbes lissées calculées à partir de l'intégralité de ton historique réel de course._")
             col_v1, col_v2 = st.columns(2)
             with col_v1:
                 fig_vo2 = px.line(df, x='Date_Clean', y='VO2_Lissée', title="Tendance VO2 Max (ml/kg/min)", color_discrete_sequence=['#00CC96'])
@@ -178,7 +207,6 @@ if uploaded_file is not None:
             st.subheader("❤️ Indice d'Efficacité Cardiaque (Évolution de tes footings)")
             st.markdown("Ce graphique analyse le coût cardiaque de tes entraînements. **Plus la courbe descend au fil des mois, plus ton cœur devient fort et économe** (il bat moins vite pour courir à la même vitesse).")
             
-            # Filtrer les lignes où le cardio est présent
             df_cardio = df[df['Fréquence cardiaque moyenne'].notna() & (df['Fréquence cardiaque moyenne'] > 0)].copy()
             
             if not df_cardio.empty:
