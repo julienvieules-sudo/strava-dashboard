@@ -67,7 +67,7 @@ if uploaded_file is not None:
         # --- STATS PAR AN ---
         stats_an = df.groupby('Année').agg(
             Distance_Totale=('Distance_km', 'sum'),
-            Nombre_Sorties=('ID de l'activité', 'count')
+            Nombre_Sorties=("ID de l'activité", "count")
         ).reset_index()
 
         # --- EXTRACTEUR DE RECORDS (Formule de Riegel pour isoler le meilleur bloc) ---
