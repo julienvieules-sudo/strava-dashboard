@@ -112,7 +112,6 @@ if uploaded_file is not None:
         stats_trim['Allure moyenne'] = stats_trim['Allure_Dec_Trim'].apply(format_allure)
         
         stats_trim_affichage = stats_trim[['Trimestre', 'Distance (km)', 'Nombre_Sorties', 'Volume horaire (h)', 'Allure moyenne']].copy()
-        # Tri décroissant du trimestre le plus récent au plus ancien
         stats_trim_affichage = stats_trim_affichage.iloc[::-1]
         stats_trim_affichage = stats_trim_affichage.rename(columns={'Nombre_Sorties': 'Nombre de runs'})
 
@@ -151,7 +150,7 @@ if uploaded_file is not None:
 
         # --- CRÉATION DES ONGLETS ---
         tab1, tab2, tab3, tab4 = st.tabs([
-            "📊 Volumes Annuels, Trimestriels & Mensuels", 
+            "📊 Volumes & Graphiques Périodiques", 
             "🏆 Records Réels & Prédictions de Course", 
             "🎯 Mes Zones d'Entraînement (Allures & Cardio)",
             "❤️ Analyse Efficacité Cardio"
@@ -173,87 +172,4 @@ if uploaded_file is not None:
             
             st.markdown("---")
             st.subheader("📆 Bilan détaillé par Année")
-            col_table, col_graph = st.columns(2)
-            with col_table:
-                st.dataframe(stats_an_affichage, use_container_width=True, hide_index=True)
-            with col_graph:
-                fig_an = px.bar(stats_an, x='Année', y='Distance_Arrondie', labels={'Distance_Arrondie': 'Distance (km)'}, title="Volume annuel (km)", color_discrete_sequence=['#FC4C02'], text_auto='.1f')
-                fig_an.update_traces(textposition='outside')
-                st.plotly_chart(fig_an, use_container_width=True)
-                
-            st.markdown("---")
-            st.subheader("🗓️ NOUVEAU : Bilan détaillé par Trimestre")
-            st.dataframe(stats_trim_affichage, use_container_width=True, hide_index=True)
-                
-            st.markdown("---")
-            # Filtre à partir de 2023 pour le graphique mensuel
-            st.subheader("📆 Progression mensuelle (Depuis 2023)")
-            df_recents = df[df['Date_Clean'] >= '2023-01-01'].copy()
-            
-            if not df_recents.empty:
-                vol_mensuel = df_recents.groupby('Mois')['Distance_km'].sum().reset_index()
-                vol_mensuel['Distance (km)'] = vol_mensuel['Distance_km'].round(1)
-                
-                fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance (km)', labels={'Distance (km)': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'], text_auto='.1f')
-                fig_vol.update_traces(textposition='outside')
-                st.plotly_chart(fig_vol, use_container_width=True)
-            else:
-                st.info("Aucune activité trouvée depuis le 01/01/2023.")
-
-        # --- TAB 2 : RECORDS & PREDICTIONS FUSIONNÉS ---
-        with tab2:
-            st.subheader("🏆 Comparatif Unique : Chronos Réels vs Prédictions de Course")
-            st.markdown(f"Ce tableau regroupe tes meilleures performances détectées dans ton historique et tes objectifs théoriques calculés d'après ta VMA saisie de **{vma_manuelle} km/h**.")
-            st.dataframe(df_unifié_records.set_index("Distance"), use_container_width=True)
-            st.info("💡 **Note sur le réel :** L'algorithme calcule maintenant ton temps réel au prorata de tes runs les plus rapides. Si ton chrono réel Strava est supérieur aux prédictions, cela signifie que tu as le potentiel physique (VMA) pour aller chercher ces nouveaux temps en travaillant ton endurance !")
-
-        # --- TAB 3 : ZONES D'ENTRAÎNEMENT ---
-        with tab3:
-            st.subheader("🎯 Zones d'Allures de Travail (Calculées sur VMA : " + str(vma_manuelle) + " km/h)")
-            
-            all_ef_max = 60 / (vma_manuelle * 0.60)
-            all_ef_min = 60 / (vma_manuelle * 0.70)
-            all_marathon_max = 60 / (vma_manuelle * 0.75)
-            all_marathon_min = 60 / (vma_manuelle * 0.80)
-            all_seuil_max = 60 / (vma_manuelle * 0.83)
-            all_seuil_min = 60 / (vma_manuelle * 0.87)
-            all_vma_max = 60 / (vma_manuelle * 0.95)
-            all_vma_min = 60 / (vma_manuelle * 1.00)
-            
-            df_zones_allures = pd.DataFrame({
-                "Zone d'Allure": ["🏃‍♂️ Endurance Fondamentale (Footing lent / Récup)", "🔋 Allure Rythme Marathon", "🎯 Seuil Lactique (Tempo / Fractionné Long)", "⚡ Séances VMA (Fractionné Court)"],
-                "Pourcentage VMA": ["60% - 70%", "75% - 80%", "83% - 87%", "95% - 100%"],
-                "Vitesse Cible": [f"{vma_manuelle*0.6:.1f} - {vma_manuelle*0.7:.1f} km/h", f"{vma_manuelle*0.75:.1f} - {vma_manuelle*0.8:.1f} km/h", f"{vma_manuelle*0.83:.1f} - {vma_manuelle*0.87:.1f} km/h", f"{vma_manuelle*0.95:.1f} - {vma_manuelle*1.0:.1f} km/h"],
-                "Allure Cible (/km)": [f"{format_allure(all_ef_max)} à {format_allure(all_ef_min)}", f"{format_allure(all_marathon_max)} à {format_allure(all_marathon_min)}", f"{format_allure(all_seuil_max)} à {format_allure(all_seuil_min)}", f"{format_allure(all_vma_max)} à {format_allure(all_vma_min)}"]
-            })
-            st.dataframe(df_zones_allures, use_container_width=True, hide_index=True)
-            
-            st.markdown("---")
-            st.subheader("❤️ Zones Cardiaques Cibles (Calculées sur FC Max : " + str(fc_max_manuelle) + " bpm)")
-            
-            df_zones_cardio = pd.DataFrame({
-                "Zone Cardiaque": ["Zone 1 - Récupération active / Échauffement", "Zone 2 - Endurance Fondamentale (Lipolyse)", "Zone 3 - Endurance Active / Rythme Marathon", "Zone 4 - Seuil Lactique / Résistance", "Zone 5 - Capacité Anaérobie / Seuil Rouge"],
-                "Pourcentage FC Max": ["50% - 60%", "60% - 75%", "75% - 85%", "85% - 95%", "95% - 100%"],
-                "Plage Cardiaque Cible": [f"{int(fc_max_manuelle*0.50)} - {int(fc_max_manuelle*0.60)} bpm", f"{int(fc_max_manuelle*0.60)} - {int(fc_max_manuelle*0.75)} bpm", f"{int(fc_max_manuelle*0.75)} - {int(fc_max_manuelle*0.85)} bpm", f"{int(fc_max_manuelle*0.85)} - {int(fc_max_manuelle*0.95)} bpm", f"{int(fc_max_manuelle*0.95)} - {fc_max_manuelle} bpm"]
-            })
-            st.dataframe(df_zones_cardio, use_container_width=True, hide_index=True)
-
-        # --- TAB 4 : CARDIO ---
-        with tab4:
-            st.subheader("❤️ Indice d'Efficacité Cardiaque")
-            st.markdown("Ce graphique analyse le coût cardiaque de tes entraînements. Plus la courbe descend, plus ton cœur devient fort et économe.")
-            
-            df_cardio = df[df['Fréquence cardiaque moyenne'].notna() & (df['Fréquence cardiaque moyenne'] > 0)].copy()
-            if not df_cardio.empty:
-                df_cardio['Indice_Cardio'] = df_cardio['Fréquence cardiaque moyenne'] / df_cardio['Vitesse_kmh']
-                df_cardio['Indice_Cardio_Lissé'] = df_cardio['Indice_Cardio'].rolling(window=5, min_periods=1).mean()
-                
-                fig_cardio = px.line(df_cardio, x='Date_Clean', y='Indice_Cardio_Lissé', title="Indice de charge cardiaque (Plus bas = Plus endurant)", color_discrete_sequence=['#EF553B'])
-                st.plotly_chart(fig_cardio, use_container_width=True)
-            else:
-                st.info("Aucune donnée de fréquence cardiaque moyenne n'a été détectée dans ton fichier.")
-
-    except Exception as e:
-        st.error(f"Une erreur est survenue lors de l'analyse : {e}")
-else:
-    st.info("👋 En attente de ton fichier 'activities.csv' dans le volet de gauche.")
+            col_table, col
