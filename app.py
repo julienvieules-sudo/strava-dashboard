@@ -17,7 +17,7 @@ if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file)
         
-        # Nettoyage des dates en français (gestion brute des chaînes pour éviter les crashs de locale)
+        # Nettoyage des dates en français 
         mois_trad = {
             "janv.": "01", "févr.": "02", "mars": "03", "avr.": "04",
             "mai": "05", "juin": "06", "juil.": "07", "août": "08",
@@ -27,7 +27,7 @@ if uploaded_file is not None:
         for fr, num in mois_trad.items():
             date_brute = date_brute.str.replace(fr, num, case=False, regex=False)
             
-        # Extraction propre du format jour, mois num, année
+        # Extraction propre (Correction : retrait du mot-clé 'fuzzy')
         df['Date_Clean'] = pd.to_datetime(date_brute, errors='coerce')
         df = df.dropna(subset=['Date_Clean'])
         
@@ -38,7 +38,7 @@ if uploaded_file is not None:
             st.warning("Aucune activité de course à pied trouvée.")
             st.stop()
             
-        # Unités (Correction des colonnes indexées .1 de l'export Strava)
+        # Unités (Correction des colonnes de l'export Strava)
         df['Distance_km'] = df['Distance.1'] / 1000
         df['Time_min'] = df['Durée de déplacement'] / 60
         df['Vitesse_kmh'] = df['Distance_km'] / (df['Time_min'] / 60)
@@ -49,28 +49,26 @@ if uploaded_file is not None:
         df['Année'] = df['Date_Clean'].dt.year.astype(str)
         df['Mois'] = df['Date_Clean'].dt.to_period('M').astype(str)
         
-        # --- CALCULS PHYSIOLOGIQUES CORRIGÉS (Fini les aberrations GPS) ---
-        # Calcul de la VMA basé sur la vitesse moyenne de tes meilleures sorties (on ignore la vitesse max bugguée)
-        # On applique un facteur de correction selon la distance pour lisser l'effort
+        # --- CALCULS PHYSIOLOGIQUES CORRIGÉS ---
         df['VMA_Est'] = df['Vitesse_kmh'] / (1.08 - 0.07 * np.log(df['Distance_km'].clip(lower=1)))
-        
-        # Sécurisation : On filtre les valeurs pour correspondre à la réalité d'un coureur amateur/régulier
         df['VMA_Est'] = df['VMA_Est'].clip(10, 18)
         df['VMA_Lissée'] = df['VMA_Est'].rolling(window=5, min_periods=1).mean()
-        
-        # VO2 Max cohérente (Formule de Daniels & Gilbert simplifiée ou ratio standard)
         df['VO2_Lissée'] = df['VMA_Lissée'] * 3.5
         
-        # Seuil cohérent (82% de la VMA pour un profil intermédiaire/avancé)
-        df['Seuil_Lissé'] = df['VMA_Lissée'] * 0.82
+        if 'Fréquence cardiaque moyenne' in df.columns and df['Fréquence cardiaque moyenne'].notna().sum() > 0:
+            df['Seuil_Lissé'] = df['VMA_Lissée'] * (165 / df['Fréquence cardiaque moyenne'].cummax().clip(140, 200)) * 0.85
+        else:
+            df['Seuil_Lissé'] = df['VMA_Lissée'] * 0.82
+            
+        df['Seuil_Lissé'] = df['Seuil_Lissé'].clip(6, 22)
 
-        # --- STATS PAR AN ---
+        # --- STATS PAR AN (Correction guillemets doubles) ---
         stats_an = df.groupby('Année').agg(
             Distance_Totale=('Distance_km', 'sum'),
             Nombre_Sorties=("ID de l'activité", "count")
         ).reset_index()
 
-        # --- EXTRACTEUR DE RECORDS (Formule de Riegel pour isoler le meilleur bloc) ---
+        # --- EXTRACTEUR DE RECORDS ---
         def temps_au_format(minutes_totales):
             heures = int(minutes_totales // 60)
             minutes = int(minutes_totales % 60)
@@ -83,10 +81,8 @@ if uploaded_file is not None:
         dist_exactes = {"5 km": 5.0, "10 km": 10.0, "Semi-Marathon": 21.1, "Marathon": 42.2}
         
         for nom, d_cible in dist_exactes.items():
-            # On cherche les sorties assez longues pour contenir cette distance
             df_utiles = df[df['Distance_km'] >= (d_cible * 0.95)]
             if not df_utiles.empty:
-                # Formule de Riegel : T2 = T1 * (D2/D1)^1.06 -> permet d'ajuster le temps sur la distance exacte
                 chronos_estimés = []
                 for _, row in df_utiles.iterrows():
                     t_ajusté = row['Time_min'] * ((d_cible / row['Distance_km']) ** 1.06)
@@ -141,7 +137,6 @@ if uploaded_file is not None:
         # --- TAB 3 : VMA & VO2 MAX ---
         with tab3:
             st.subheader("📈 Évolution corrigée de tes capacités physiologiques")
-            st.markdown("_Les erreurs dues aux sauts de vitesse du GPS ont été nettoyées._")
             col_v1, col_v2 = st.columns(2)
             with col_v1:
                 fig_vo2 = px.line(df, x='Date_Clean', y='VO2_Lissée', title="Tendance VO2 Max (ml/kg/min)", color_discrete_sequence=['#00CC96'])
@@ -168,14 +163,13 @@ if uploaded_file is not None:
             st.markdown("Ce graphique montre ton évolution sur les footings. Si tu progresses, ta courbe doit descendre avec le temps : cela signifie que ta fréquence cardiaque diminue pour une même vitesse.")
             
             if 'Fréquence cardiaque moyenne' in df.columns and df['Fréquence cardiaque moyenne'].notna().sum() > 0:
-                # Calcul de l'indice : FC moyenne divisée par la vitesse. Plus il est bas, plus le coureur est efficace.
                 df['Indice_Cardio'] = df['Fréquence cardiaque moyenne'] / df['Vitesse_kmh']
                 df['Indice_Cardio_Lissé'] = df['Indice_Cardio'].rolling(window=5, min_periods=1).mean()
                 
                 fig_cardio = px.line(df, x='Date_Clean', y='Indice_Cardio_Lissé', title="Coût Cardiaque (Plus bas = Plus endurant)", color_discrete_sequence=['#EF553B'])
                 st.plotly_chart(fig_cardio, use_container_width=True)
             else:
-                st.info("Données de fréquence cardiaque insuffisantes ou absentes dans le fichier pour générer l'analyse des footings.")
+                st.info("Données de fréquence cardiaque insuffisantes dans le fichier pour générer l'analyse des footings.")
 
     except Exception as e:
         st.error(f"Une erreur est survenue lors de l'analyse : {e}")
