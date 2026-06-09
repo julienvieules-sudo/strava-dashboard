@@ -6,8 +6,8 @@ import plotly.express as px
 # Configuration de la page web
 st.set_page_config(page_title="Mon Dashboard Strava", layout="wide", page_icon="🏃‍♂️")
 
-st.title("🏃‍♂️ Mon Tableau de Bord Running Personnalisé")
-st.markdown("Analyse croisée entre tes performances réelles Strava et ton profil physiologique configuré manuellement.")
+st.title("Mon Tableau de Bord Running")
+st.markdown("Analyse de ton historique Strava combinée à tes zones cibles personnalisées.")
 
 # Fonction de décodage des dates
 def parser_date_francaise(date_str):
@@ -27,7 +27,7 @@ def parser_date_francaise(date_str):
             break
     return pd.to_datetime(res, format="%d %m %Y %H:%M:%S", errors='coerce')
 
-# Convertisseur allure décimale -> chaîne (ex: 4.5 -> 4:30 /km)
+# Convertisseurs de formats
 def format_allure(allure_dec):
     if np.isnan(allure_dec) or np.isinf(allure_dec):
         return "--:--"
@@ -35,7 +35,6 @@ def format_allure(allure_dec):
     secondes = int((allure_dec % 1) * 60)
     return f"{minutes}:{secondes:02d} /km"
 
-# Convertisseur minutes -> format horloge (ex: 125.5 -> 2h 05m 30s)
 def mins_to_clock(minutes_totales):
     if np.isnan(minutes_totales) or np.isinf(minutes_totales):
         return "-"
@@ -71,7 +70,7 @@ if uploaded_file is not None:
         df['Time_min'] = df['Durée de déplacement'] / 60
         df['Vitesse_kmh'] = df['Distance_km'] / (df['Time_min'] / 60)
         
-        # Variables de temps
+        # Variables temporelles
         df = df.sort_values('Date_Clean')
         df['Année'] = df['Date_Clean'].dt.year.astype(str)
         df['Mois'] = df['Date_Clean'].dt.to_period('M').astype(str)
@@ -89,45 +88,53 @@ if uploaded_file is not None:
         stats_an_affichage = stats_an_affichage.sort_values('Année', ascending=False)
         stats_an_affichage = stats_an_affichage.rename(columns={'Distance_Totale': 'Distance (km)', 'Nombre_Sorties': 'Nombre de runs'})
 
-        # --- RECHERCHE DES CHRONOS RÉELS ---
-        records_reels = {"Distance": [], "Meilleur Chrono Réel": [], "Date": [], "Nom de l'activité Strava": []}
-        dist_cibles = {"5 km": 5.0, "10 km": 10.0, "Semi-Marathon": 21.1, "Marathon": 42.195}
+        # --- RECHERCHE ET EXTRACTION DES CHRONOS RÉELS ET ESTIMATIONS ---
+        # Paramètres des fourchettes basés sur des % de VMA réalistes (Prudent vs Optimiste)
+        zones_vma_pred = {
+            "5 km": {"d": 5.0, "p_prud": 0.89, "p_opt": 0.94},
+            "10 km": {"d": 10.0, "p_prud": 0.82, "p_opt": 0.86},
+            "Semi-Marathon": {"d": 21.1, "p_prud": 0.76, "p_opt": 0.80},
+            "Marathon": {"d": 42.195, "p_prud": 0.67, "p_opt": 0.72}
+        }
         
-        for nom, d_cible in dist_cibles.items():
-            # On cherche les activités dont la distance globale est proche de la cible (+ ou - 8%)
-            tol_inf = d_cible * 0.92
-            tol_sup = d_cible * 1.08
-            df_matching = df[(df['Distance_km'] >= tol_inf) & (df['Distance_km'] <= tol_sup)]
+        summary_records = []
+        
+        for nom, config in zones_vma_pred.items():
+            d_cible = config["d"]
             
-            if not df_matching.empty:
-                # Le meilleur chrono réel est l'activité la plus rapide sur cette tranche
-                idx_meilleur = df_matching['Time_min'].idxmin()
-                run_reel = df_matching.loc[idx_meilleur]
-                
-                records_reels["Distance"].append(nom)
-                records_reels["Meilleur Chrono Réel"].append(mins_to_clock(run_reel['Time_min']))
-                records_reels["Date"].append(run_reel['Date_Clean'].strftime('%d/%m/%Y'))
-                records_reels["Nom de l'activité Strava"].append(run_reel["Nom de l'activité"])
+            # 1. Calcul du Chrono Réel Strava (au prorata pour isoler les blocs rapides au sein des sorties longues)
+            df_utiles = df[df['Distance_km'] >= (d_cible * 0.95)]
+            if not df_utiles.empty:
+                # On calcule le temps mis pour faire la distance cible à la vitesse moyenne de ce run
+                temps_au_prorata = (d_cible / df_utiles['Vitesse_kmh']) * 60
+                chrono_reel_str = mins_to_clock(temps_au_prorata.min())
             else:
-                records_reels["Distance"].append(nom)
-                records_reels["Meilleur Chrono Réel"].append("Aucune activité de cette distance")
-                records_reels["Date"].append("-")
-                records_reels["Nom de l'activité Strava"].append("-")
+                chrono_reel_str = "Pas de run assez long"
                 
-        df_records_reels = pd.DataFrame(records_reels)
+            # 2. Calcul des Prédictions en Fourchette (Basé sur la VMA manuelle)
+            t_prudent = (d_cible / (vma_manuelle * config["p_prud"])) * 60
+            t_optimiste = (d_cible / (vma_manuelle * config["p_opt"])) * 60
+            
+            summary_records.append({
+                "Distance": nom,
+                "Mon Meilleur Réel (Strava)": chrono_reel_str,
+                "Prédiction - Fourchette Basse (Prudent)": mins_to_clock(t_prudent),
+                "Prédiction - Fourchette Haute (Optimiste)": mins_to_clock(t_optimiste)
+            })
+            
+        df_unifié_records = pd.DataFrame(summary_records)
 
-        # --- CRÉATION DES ONGLETS ---
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        # --- CRÉATION DES ONGLETS RESTRUCTURÉS ---
+        tab1, tab2, tab3, tab4 = st.tabs([
             "📊 Volumes Annuels & Mensuels", 
-            "⏱️ Mes Chronos Réels Strava",
-            "🔮 Prédictions de Course (Fourchette)", 
-            "🎯 Mes Zones d'Entraînement Target",
-            "❤️ Analyse Cardio & Footings"
+            "🏆 Records Réels & Prédictions de Course", 
+            "🎯 Mes Zones d'Entraînement (Allures & Cardio)",
+            "❤️ Analyse Efficacité Cardio"
         ])
 
         # --- TAB 1 : VOLUMES ---
         with tab1:
-            st.subheader("🏃‍♂️ Statistiques globales historiques (Tout temps)")
+            st.subheader("🏃‍♂️ Vos statistiques globales historiques (Tout temps)")
             c1, c2, c3, c4 = st.columns(4)
             dist_totale = df['Distance_km'].sum()
             runs_totaux = len(df)
@@ -153,94 +160,38 @@ if uploaded_file is not None:
             fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance_km', labels={'Distance_km': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'])
             st.plotly_chart(fig_vol, use_container_width=True)
 
-        # --- TAB 2 : CHRONOS RÉELS ---
+        # --- TAB 2 : RECORDE & PREDICTIONS FUSIONNÉS ---
         with tab2:
-            st.subheader("⏱️ Tes meilleures performances enregistrées sur Strava")
-            st.markdown("_Ce tableau extrait la durée totale brute de tes sorties dont la distance totale correspond à ces formats de course (+/- 8%)._")
-            st.table(df_records_reels.set_index("Distance"))
+            st.subheader("🏆 Comparatif Unique : Chronos Réels vs Prédictions de Course")
+            st.markdown(f"Ce tableau regroupe tes meilleures performances détectées dans ton historique et tes objectifs théoriques calculés d'après ta VMA saisie de **{vma_manuelle} km/h**.")
+            
+            st.dataframe(df_unifié_records.set_index("Distance"), use_container_width=True)
+            
+            st.info("💡 **Note sur le réel :** L'algorithme calcule maintenant ton temps réel au prorata de tes runs les plus rapides. Si ton chrono réel Strava est supérieur aux prédictions, cela signifie que tu as le potentiel physique (VMA) pour aller chercher ces nouveaux temps en travaillant ton endurance !")
 
-        # --- TAB 3 : PRÉDICTIONS EN FOURCHETTE (Modèle de Riegel adapté) ---
+        # --- TAB 3 : ZONES D'ENTRAÎNEMENT ---
         with tab3:
-            st.subheader("🔮 Prédictions théoriques basées sur ta VMA de " + str(vma_manuelle) + " km/h")
-            st.markdown("Voici une estimation de tes chronos possibles selon ton niveau d'endurance (Indice de Riegel entre -0.06 pour le profil optimiste et -0.09 pour le profil standard/pessimiste) :")
+            st.subheader("🎯 Zones d'Allures de Travail (Calculées sur VMA : " + str(vma_manuelle) + " km/h)")
             
-            predictions = {"Distance": [], "Fourchette Haute (Prudent)": [], "Fourchette Basse (Optimiste)": []}
-            
-            # Calculs basés sur la VMA rentrée
-            # On pose le temps de référence de base sur un 10k théorique (à 85% ou 88% VMA)
-            t_ref_base_min = (10.0 / (vma_manuelle * 0.86)) * 60
-            
-            for nom, d_cible in dist_cibles.items():
-                # Riegel prudent (ex: profil plutôt typé vitesse que marathon)
-                t_prudent = t_ref_base_min * ((d_cible / 10.0) ** 1.09)
-                # Riegel optimiste (ex: profil très endurant / jour de grâce)
-                t_optimiste = t_ref_base_min * ((d_cible / 10.0) ** 1.06)
-                
-                # Ajustement direct spécifique au 5k pour qu'il colle à ton niveau max VMA (~93-95% VMA)
-                if nom == "5 km":
-                    t_prudent = (5.0 / (vma_manuelle * 0.92)) * 60
-                    t_optimiste = (5.0 / (vma_manuelle * 0.95)) * 60
-                
-                predictions["Distance"].append(nom)
-                predictions["Fourchette Haute (Prudent)"].append(mins_to_clock(t_prudent))
-                predictions["Fourchette Basse (Optimiste)"].append(mins_to_clock(t_optimiste))
-                
-            df_pred = pd.DataFrame(predictions)
-            st.table(df_pred.set_index("Distance"))
-            st.caption("💡 Si tes chronos réels (onglet précédent) sont plus lents que la fourchette basse, cela montre que tu as une grosse marge de progression en travaillant ton endurance spécifique sur cette distance !")
-
-        # --- TAB 4 : ZONES D'ENTRAÎNEMENT CIBLES ---
-        with tab4:
-            st.subheader("🎯 Tes Zones d'Allures de Travail (Basées sur VMA)")
-            
-            # Calcul des allures cibles (en min/km)
             all_ef_max = 60 / (vma_manuelle * 0.60)
             all_ef_min = 60 / (vma_manuelle * 0.70)
-            
             all_marathon_max = 60 / (vma_manuelle * 0.75)
             all_marathon_min = 60 / (vma_manuelle * 0.80)
-            
             all_seuil_max = 60 / (vma_manuelle * 0.83)
             all_seuil_min = 60 / (vma_manuelle * 0.87)
-            
             all_vma_max = 60 / (vma_manuelle * 0.95)
             all_vma_min = 60 / (vma_manuelle * 1.00)
             
             df_zones_allures = pd.DataFrame({
-                "Zone d'Allure": ["🏃‍♂️ Endurance Fondamentale (Footing / Récup)", "🔋 Allure Rythme Marathon", "🎯 Seuil Lactique (Tempo / Fractionné Long)", "⚡ Séances VMA (Fractionné Court)"],
+                "Zone d'Allure": ["🏃‍♂️ Endurance Fondamentale (Footing lent / Récup)", "🔋 Allure Rythme Marathon", "🎯 Seuil Lactique (Tempo / Fractionné Long)", "⚡ Séances VMA (Fractionné Court)"],
                 "Pourcentage VMA": ["60% - 70%", "75% - 80%", "83% - 87%", "95% - 100%"],
-                "Vitesse Cible (km/h)": [f"{vma_manuelle*0.6:.1f} - {vma_manuelle*0.7:.1f} km/h", f"{vma_manuelle*0.75:.1f} - {vma_manuelle*0.8:.1f} km/h", f"{vma_manuelle*0.83:.1f} - {vma_manuelle*0.87:.1f} km/h", f"{vma_manuelle*0.95:.1f} - {vma_manuelle*1.0:.1f} km/h"],
+                "Vitesse Cible": [f"{vma_manuelle*0.6:.1f} - {vma_manuelle*0.7:.1f} km/h", f"{vma_manuelle*0.75:.1f} - {vma_manuelle*0.8:.1f} km/h", f"{vma_manuelle*0.83:.1f} - {vma_manuelle*0.87:.1f} km/h", f"{vma_manuelle*0.95:.1f} - {vma_manuelle*1.0:.1f} km/h"],
                 "Allure Cible (/km)": [f"{format_allure(all_ef_max)} à {format_allure(all_ef_min)}", f"{format_allure(all_marathon_max)} à {format_allure(all_marathon_min)}", f"{format_allure(all_seuil_max)} à {format_allure(all_seuil_min)}", f"{format_allure(all_vma_max)} à {format_allure(all_vma_min)}"]
             })
             st.dataframe(df_zones_allures, use_container_width=True, hide_index=True)
             
             st.markdown("---")
-            st.subheader("❤️ Tes Zones Cardiaques Cibles (Basées sur FC Max : " + str(fc_max_manuelle) + " bpm)")
-            st.markdown("_Zones classiques selon l'échelle d'intensité (méthode de la FC Max) :_")
+            st.subheader("❤️ Zones Cardiaques Cibles (Calculées sur FC Max : " + str(fc_max_manuelle) + " bpm)")
             
             df_zones_cardio = pd.DataFrame({
-                "Zone Cardiaque": ["Zone 1 - Récupération active / Footing très lent", "Zone 2 - Endurance Fondamentale (Lipolyse)", "Zone 3 - Endurance Active / Rythme Marathon", "Zone 4 - Seuil Lactique / Résistance", "Zone 5 - Capacité Anaérobie / VMA"],
-                "Pourcentage FC Max": ["50% - 60%", "60% - 75%", "75% - 85%", "85% - 95%", "95% - 100%"],
-                "Plage Cardiaque Cible": [f"{int(fc_max_manuelle*0.50)} - {int(fc_max_manuelle*0.60)} bpm", f"{int(fc_max_manuelle*0.60)} - {int(fc_max_manuelle*0.75)} bpm", f"{int(fc_max_manuelle*0.75)} - {int(fc_max_manuelle*0.85)} bpm", f"{int(fc_max_manuelle*0.85)} - {int(fc_max_manuelle*0.95)} bpm", f"{int(fc_max_manuelle*0.95)} - {fc_max_manuelle} bpm"]
-            })
-            st.dataframe(df_zones_cardio, use_container_width=True, hide_index=True)
-
-        # --- TAB 5 : CARDIO & FOOTINGS ---
-        with tab5:
-            st.subheader("❤️ Indice d'Efficacité Cardiaque (Évolution de tes footings)")
-            st.markdown("Ce graphique analyse le coût cardiaque de tes entraînements. Plus la courbe descend au fil des mois, plus ton cœur devient fort et économe (il bat moins vite pour courir à la même vitesse).")
-            
-            df_cardio = df[df['Fréquence cardiaque moyenne'].notna() & (df['Fréquence cardiaque moyenne'] > 0)].copy()
-            if not df_cardio.empty:
-                df_cardio['Indice_Cardio'] = df_cardio['Fréquence cardiaque moyenne'] / df_cardio['Vitesse_kmh']
-                df_cardio['Indice_Cardio_Lissé'] = df_cardio['Indice_Cardio'].rolling(window=5, min_periods=1).mean()
-                
-                fig_cardio = px.line(df_cardio, x='Date_Clean', y='Indice_Cardio_Lissé', title="Indice de charge cardiaque (Plus bas = Plus endurant)", color_discrete_sequence=['#EF553B'])
-                st.plotly_chart(fig_cardio, use_container_width=True)
-            else:
-                st.info("Aucune donnée de fréquence cardiaque moyenne n'a été détectée dans ton fichier.")
-
-    except Exception as e:
-        st.error(f"Une erreur est survenue lors de l'analyse : {e}")
-else:
-    st.info("👋 En attente de ton fichier 'activities.csv' dans le volet de gauche.")
+                "Zone Cardiaque":
