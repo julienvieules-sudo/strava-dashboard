@@ -74,6 +74,10 @@ if uploaded_file is not None:
         df = df.sort_values('Date_Clean')
         df['Année'] = df['Date_Clean'].dt.year.astype(str)
         df['Mois'] = df['Date_Clean'].dt.to_period('M').astype(str)
+        
+        # Ajout des identifiants et libellés trimestriels (ex: 2026-Q2 et T2 2026)
+        df['Trimestre_Id'] = df['Date_Clean'].dt.year.astype(str) + "-Q" + df['Date_Clean'].dt.quarter.astype(str)
+        df['Trimestre'] = "T" + df['Date_Clean'].dt.quarter.astype(str) + " " + df['Date_Clean'].dt.year.astype(str)
 
         # --- STATS PAR AN ---
         stats_an = df.groupby('Année').agg(
@@ -82,7 +86,6 @@ if uploaded_file is not None:
             Temps_Total_Min=('Time_min', 'sum')
         ).reset_index()
         
-        # Calculs et arrondis demandés
         stats_an['Distance_Arrondie'] = stats_an['Distance_Totale'].round(1)
         stats_an['Volume_Horaire'] = (stats_an['Temps_Total_Min'] / 60).round(1)
         stats_an['Allure_Dec_An'] = stats_an['Temps_Total_Min'] / stats_an['Distance_Totale']
@@ -95,6 +98,23 @@ if uploaded_file is not None:
             'Nombre_Sorties': 'Nombre de runs',
             'Volume_Horaire': 'Volume horaire (h)'
         })
+
+        # --- STATS PAR TRIMESTRE ---
+        stats_trim = df.groupby(['Trimestre_Id', 'Trimestre']).agg(
+            Distance_Totale=('Distance_km', 'sum'),
+            Nombre_Sorties=("ID de l'activité", "count"),
+            Temps_Total_Min=('Time_min', 'sum')
+        ).reset_index()
+        
+        stats_trim['Distance (km)'] = stats_trim['Distance_Totale'].round(1)
+        stats_trim['Volume horaire (h)'] = (stats_trim['Temps_Total_Min'] / 60).round(1)
+        stats_trim['Allure_Dec_Trim'] = stats_trim['Temps_Total_Min'] / stats_trim['Distance_Totale']
+        stats_trim['Allure moyenne'] = stats_trim['Allure_Dec_Trim'].apply(format_allure)
+        
+        stats_trim_affichage = stats_trim[['Trimestre', 'Distance (km)', 'Nombre_Sorties', 'Volume horaire (h)', 'Allure moyenne']].copy()
+        # Tri décroissant du trimestre le plus récent au plus ancien
+        stats_trim_affichage = stats_trim_affichage.iloc[::-1]
+        stats_trim_affichage = stats_trim_affichage.rename(columns={'Nombre_Sorties': 'Nombre de runs'})
 
         # --- RECHERCHE ET EXTRACTION DES CHRONOS RÉELS ET ESTIMATIONS ---
         zones_vma_pred = {
@@ -131,7 +151,7 @@ if uploaded_file is not None:
 
         # --- CRÉATION DES ONGLETS ---
         tab1, tab2, tab3, tab4 = st.tabs([
-            "📊 Volumes Annuels & Mensuels", 
+            "📊 Volumes Annuels, Trimestriels & Mensuels", 
             "🏆 Records Réels & Prédictions de Course", 
             "🎯 Mes Zones d'Entraînement (Allures & Cardio)",
             "❤️ Analyse Efficacité Cardio"
@@ -157,19 +177,25 @@ if uploaded_file is not None:
             with col_table:
                 st.dataframe(stats_an_affichage, use_container_width=True, hide_index=True)
             with col_graph:
-                fig_an = px.bar(stats_an, x='Année', y='Distance_Arrondie', labels={'Distance_Arrondie': 'Distance (km)'}, title="Volume annuel (km)", color_discrete_sequence=['#FC4C02'])
+                fig_an = px.bar(stats_an, x='Année', y='Distance_Arrondie', labels={'Distance_Arrondie': 'Distance (km)'}, title="Volume annuel (km)", color_discrete_sequence=['#FC4C02'], text_auto='.1f')
+                fig_an.update_traces(textposition='outside')
                 st.plotly_chart(fig_an, use_container_width=True)
                 
+            st.markdown("---")
+            st.subheader("🗓️ NOUVEAU : Bilan détaillé par Trimestre")
+            st.dataframe(stats_trim_affichage, use_container_width=True, hide_index=True)
+                
+            st.markdown("---")
             # Filtre à partir de 2023 pour le graphique mensuel
             st.subheader("📆 Progression mensuelle (Depuis 2023)")
             df_recents = df[df['Date_Clean'] >= '2023-01-01'].copy()
             
             if not df_recents.empty:
                 vol_mensuel = df_recents.groupby('Mois')['Distance_km'].sum().reset_index()
-                # Arrondir aussi la distance du hover info sur le graphique
                 vol_mensuel['Distance (km)'] = vol_mensuel['Distance_km'].round(1)
                 
-                fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance (km)', labels={'Distance (km)': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'])
+                fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance (km)', labels={'Distance (km)': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'], text_auto='.1f')
+                fig_vol.update_traces(textposition='outside')
                 st.plotly_chart(fig_vol, use_container_width=True)
             else:
                 st.info("Aucune activité trouvée depuis le 01/01/2023.")
