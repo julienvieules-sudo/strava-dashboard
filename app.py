@@ -28,7 +28,7 @@ if uploaded_file is not None:
             date_brute = date_brute.str.replace(fr, num, case=False, regex=False)
             
         # Extraction propre du format jour, mois num, année
-        df['Date_Clean'] = pd.to_datetime(date_brute, errors='coerce', fuzzy=True)
+        df['Date_Clean'] = pd.to_datetime(date_brute, errors='coerce')
         df = df.dropna(subset=['Date_Clean'])
         
         # Filtrer la Course à pied uniquement
