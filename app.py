@@ -247,44 +247,49 @@ if uploaded_file is not None:
                 fig_c = px.line(df_c, x='Date_Clean', y=df_c['Indice'].rolling(5).mean())
                 st.plotly_chart(fig_c, use_container_width=True)
 
-     # --- TAB 5 : RATIO DE CHARGE (VERSION SÉCURISÉE) ---
+     # --- TAB 5 : RATIO DE CHARGE (CORRECTIF NAN) ---
         with tab5:
             st.subheader("⚖️ Ratio de Charge (ACWR)")
             
-            # Préparation des données
+            # 1. Préparation des données
             df_recents = df[df['Date_Clean'] >= '2023-01-01'].copy()
             
             if df_recents.empty:
-                st.info("Pas assez de données depuis 2023 pour calculer le ratio.")
+                st.info("Pas assez de données depuis 2023.")
             else:
+                # Groupement par semaine et remplissage des trous par 0
                 vol = df_recents.groupby('Semaine')['Distance_km'].sum().reset_index()
                 vol['Semaine_Date'] = pd.to_datetime(vol['Semaine'] + '-1', format='%G-W%V-%w')
-                vol = vol.set_index('Semaine_Date').asfreq('W').fillna(0).reset_index()
+                vol = vol.set_index('Semaine_Date').asfreq('W', fill_value=0).reset_index()
                 
+                # 2. Calcul propre : forcer le type float et remplir les NaN
                 vol['Chronique'] = vol['Distance_km'].rolling(window=4, min_periods=1).mean()
-                vol['Ratio'] = vol['Distance_km'] / vol['Chronique']
-                vol['Zone'] = pd.cut(vol['Ratio'], bins=[0, 0.8, 1.5, 10], labels=["Bleu (Sous-charge)", "Vert (Optimal)", "Rouge (Risque)"])
+                # On évite la division par zéro en remplaçant les 0 par des petits chiffres si nécessaire
+                vol['Ratio'] = vol['Distance_km'] / vol['Chronique'].replace(0, np.nan)
+                vol['Ratio'] = vol['Ratio'].fillna(0) # Si le ratio est NaN, on met 0
                 
-                # Graphique
+                # 3. Zone de couleur
+                vol['Zone'] = pd.cut(vol['Ratio'], bins=[-1, 0.8, 1.5, 100], labels=["Bleu (Sous-charge)", "Vert (Optimal)", "Rouge (Risque)"])
+                
+                # 4. Graphique
                 fig = px.scatter(vol, x=vol['Semaine_Date'].dt.strftime('%Y-W%V'), y='Ratio', color='Zone', 
                                  color_discrete_map={"Vert (Optimal)": "green", "Bleu (Sous-charge)": "blue", "Rouge (Risque)": "red"})
                 
-                line_trace = px.line(vol, x=vol['Semaine_Date'].dt.strftime('%Y-W%V'), y='Ratio').data[0]
-                line_trace.update(connectgaps=False)
-                fig.add_trace(line_trace)
+                # Ajout de la ligne
+                line_trace = px.line(vol, x=vol['Semaine_Date'].dt.strftime('%Y-W%V'), y='Ratio')
+                fig.add_trace(line_trace.data[0])
                 
                 fig.add_hline(y=1.5, line_dash="dash", line_color="red")
                 fig.add_hline(y=0.8, line_dash="dash", line_color="blue")
                 fig.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Verdict sécurisé
-                data_points = vol[vol['Distance_km'] >= 0] # On prend tout, même les semaines à 0
-                if not data_points.empty:
-                    last = data_points['Ratio'].iloc[-1]
-                    if last > 1.5: st.error(f"⚠️ Ratio actuel {last:.2f} : Surcharge (Risque de blessure)")
-                    elif last < 0.8: st.info(f"📉 Ratio actuel {last:.2f} : Sous-charge (Tu peux augmenter)")
-                    else: st.success(f"✅ Ratio actuel {last:.2f} : Optimal")
+                # 5. Verdict
+                last = vol['Ratio'].iloc[-1]
+                if last > 1.5: st.error(f"⚠️ Ratio actuel {last:.2f} : Surcharge")
+                elif last < 0.1: st.info("📉 Ratio actuel : Données insuffisantes (reprends l'entraînement !)")
+                elif last < 0.8: st.info(f"📉 Ratio actuel {last:.2f} : Sous-charge")
+                else: st.success(f"✅ Ratio actuel {last:.2f} : Optimal")
 
     except Exception as e:
         st.error(f"Une erreur est survenue : {e}")
