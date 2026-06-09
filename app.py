@@ -82,14 +82,21 @@ if uploaded_file is not None:
             Temps_Total_Min=('Time_min', 'sum')
         ).reset_index()
         
+        # Calculs et arrondis demandés
+        stats_an['Distance_Arrondie'] = stats_an['Distance_Totale'].round(1)
+        stats_an['Volume_Horaire'] = (stats_an['Temps_Total_Min'] / 60).round(1)
         stats_an['Allure_Dec_An'] = stats_an['Temps_Total_Min'] / stats_an['Distance_Totale']
         stats_an['Allure moyenne'] = stats_an['Allure_Dec_An'].apply(format_allure)
-        stats_an_affichage = stats_an[['Année', 'Distance_Totale', 'Nombre_Sorties', 'Allure moyenne']].copy()
+        
+        stats_an_affichage = stats_an[['Année', 'Distance_Arrondie', 'Nombre_Sorties', 'Volume_Horaire', 'Allure moyenne']].copy()
         stats_an_affichage = stats_an_affichage.sort_values('Année', ascending=False)
-        stats_an_affichage = stats_an_affichage.rename(columns={'Distance_Totale': 'Distance (km)', 'Nombre_Sorties': 'Nombre de runs'})
+        stats_an_affichage = stats_an_affichage.rename(columns={
+            'Distance_Arrondie': 'Distance (km)', 
+            'Nombre_Sorties': 'Nombre de runs',
+            'Volume_Horaire': 'Volume horaire (h)'
+        })
 
         # --- RECHERCHE ET EXTRACTION DES CHRONOS RÉELS ET ESTIMATIONS ---
-        # Paramètres des fourchettes basés sur des % de VMA réalistes (Prudent vs Optimiste)
         zones_vma_pred = {
             "5 km": {"d": 5.0, "p_prud": 0.89, "p_opt": 0.94},
             "10 km": {"d": 10.0, "p_prud": 0.82, "p_opt": 0.86},
@@ -98,20 +105,18 @@ if uploaded_file is not None:
         }
         
         summary_records = []
-        
         for nom, config in zones_vma_pred.items():
             d_cible = config["d"]
             
-            # 1. Calcul du Chrono Réel Strava (au prorata pour isoler les blocs rapides au sein des sorties longues)
+            # Calcul du Chrono Réel Strava
             df_utiles = df[df['Distance_km'] >= (d_cible * 0.95)]
             if not df_utiles.empty:
-                # On calcule le temps mis pour faire la distance cible à la vitesse moyenne de ce run
                 temps_au_prorata = (d_cible / df_utiles['Vitesse_kmh']) * 60
                 chrono_reel_str = mins_to_clock(temps_au_prorata.min())
             else:
                 chrono_reel_str = "Pas de run assez long"
                 
-            # 2. Calcul des Prédictions en Fourchette (Basé sur la VMA manuelle)
+            # Calcul des Prédictions en Fourchette
             t_prudent = (d_cible / (vma_manuelle * config["p_prud"])) * 60
             t_optimiste = (d_cible / (vma_manuelle * config["p_opt"])) * 60
             
@@ -124,7 +129,7 @@ if uploaded_file is not None:
             
         df_unifié_records = pd.DataFrame(summary_records)
 
-        # --- CRÉATION DES ONGLETS RESTRUCTURÉS ---
+        # --- CRÉATION DES ONGLETS ---
         tab1, tab2, tab3, tab4 = st.tabs([
             "📊 Volumes Annuels & Mensuels", 
             "🏆 Records Réels & Prédictions de Course", 
@@ -152,21 +157,28 @@ if uploaded_file is not None:
             with col_table:
                 st.dataframe(stats_an_affichage, use_container_width=True, hide_index=True)
             with col_graph:
-                fig_an = px.bar(stats_an, x='Année', y='Distance_Totale', labels={'Distance_Totale': 'Distance (km)'}, title="Volume annuel (km)", color_discrete_sequence=['#FC4C02'])
+                fig_an = px.bar(stats_an, x='Année', y='Distance_Arrondie', labels={'Distance_Arrondie': 'Distance (km)'}, title="Volume annuel (km)", color_discrete_sequence=['#FC4C02'])
                 st.plotly_chart(fig_an, use_container_width=True)
                 
-            st.subheader("📆 Progression mensuelle")
-            vol_mensuel = df.groupby('Mois')['Distance_km'].sum().reset_index()
-            fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance_km', labels={'Distance_km': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'])
-            st.plotly_chart(fig_vol, use_container_width=True)
+            # Filtre à partir de 2023 pour le graphique mensuel
+            st.subheader("📆 Progression mensuelle (Depuis 2023)")
+            df_recents = df[df['Date_Clean'] >= '2023-01-01'].copy()
+            
+            if not df_recents.empty:
+                vol_mensuel = df_recents.groupby('Mois')['Distance_km'].sum().reset_index()
+                # Arrondir aussi la distance du hover info sur le graphique
+                vol_mensuel['Distance (km)'] = vol_mensuel['Distance_km'].round(1)
+                
+                fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance (km)', labels={'Distance (km)': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'])
+                st.plotly_chart(fig_vol, use_container_width=True)
+            else:
+                st.info("Aucune activité trouvée depuis le 01/01/2023.")
 
-        # --- TAB 2 : RECORDE & PREDICTIONS FUSIONNÉS ---
+        # --- TAB 2 : RECORDS & PREDICTIONS FUSIONNÉS ---
         with tab2:
             st.subheader("🏆 Comparatif Unique : Chronos Réels vs Prédictions de Course")
             st.markdown(f"Ce tableau regroupe tes meilleures performances détectées dans ton historique et tes objectifs théoriques calculés d'après ta VMA saisie de **{vma_manuelle} km/h**.")
-            
             st.dataframe(df_unifié_records.set_index("Distance"), use_container_width=True)
-            
             st.info("💡 **Note sur le réel :** L'algorithme calcule maintenant ton temps réel au prorata de tes runs les plus rapides. Si ton chrono réel Strava est supérieur aux prédictions, cela signifie que tu as le potentiel physique (VMA) pour aller chercher ces nouveaux temps en travaillant ton endurance !")
 
         # --- TAB 3 : ZONES D'ENTRAÎNEMENT ---
