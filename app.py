@@ -247,24 +247,44 @@ if uploaded_file is not None:
                 fig_c = px.line(df_c, x='Date_Clean', y=df_c['Indice'].rolling(5).mean())
                 st.plotly_chart(fig_c, use_container_width=True)
 
-        # --- TAB 5 : RATIO DE CHARGE (Ajouté) ---
+       # --- TAB 5 : RATIO DE CHARGE (CORRIGÉ) ---
         with tab5:
-            st.subheader("⚖️ Ratio de Charge (Acute:Chronic Workload Ratio)")
-            df_recents = df[df['Date_Clean'] >= '2023-01-01'].copy()
-            vol = df_recents.groupby('Semaine')['Distance_km'].sum().reset_index().sort_values('Semaine')
+            st.subheader("⚖️ Ratio de Charge (ACWR)")
+            
+            # 1. Préparation : Créer une plage complète de semaines
+            # On s'assure de travailler sur une copie pour ne pas affecter les autres onglets
+            vol = df_recents.groupby('Semaine')['Distance_km'].sum().reset_index()
+            
+            # Conversion robuste des semaines (format ISO)
+            vol['Semaine_Date'] = pd.to_datetime(vol['Semaine'] + '-1', format='%G-W%V-%w')
+            vol = vol.set_index('Semaine_Date').asfreq('W').fillna(0).reset_index()
+            
+            # 2. Calcul des charges
             vol['Chronique'] = vol['Distance_km'].rolling(window=4, min_periods=1).mean()
             vol['Ratio'] = vol['Distance_km'] / vol['Chronique']
+            
+            # 3. Zone de couleur
             vol['Zone'] = pd.cut(vol['Ratio'], bins=[0, 0.8, 1.5, 10], labels=["Bleu (Sous-charge)", "Vert (Optimal)", "Rouge (Risque)"])
             
-            fig = px.scatter(vol, x='Semaine', y='Ratio', color='Zone', 
+            # 4. Graphique propre
+            fig = px.scatter(vol, x=vol['Semaine_Date'].dt.strftime('%Y-W%V'), y='Ratio', color='Zone', 
                              color_discrete_map={"Vert (Optimal)": "green", "Bleu (Sous-charge)": "blue", "Rouge (Risque)": "red"})
-            fig.add_trace(px.line(vol, x='Semaine', y='Ratio').data[0])
+            
+            # Ligne de liaison sans reconnecter les trous (connectgaps=False)
+            line_trace = px.line(vol, x=vol['Semaine_Date'].dt.strftime('%Y-W%V'), y='Ratio').data[0]
+            line_trace.update(connectgaps=False)
+            fig.add_trace(line_trace)
+            
             fig.add_hline(y=1.5, line_dash="dash", line_color="red")
             fig.add_hline(y=0.8, line_dash="dash", line_color="blue")
+            fig.update_layout(xaxis_tickangle=-45)
+            
             st.plotly_chart(fig, use_container_width=True)
             
-            last = vol['Ratio'].iloc[-1]
-            if last > 1.5: st.error(f"⚠️ Ratio actuel {last:.2f} : Surcharge (Risque de blessure)")
+            # 5. Verdict
+            last_row = vol[vol['Distance_km'] > 0].iloc[-1]
+            last = last_row['Ratio']
+            if last > 1.5: st.error(f"⚠️ Ratio actuel {last:.2f} : Surcharge (Risque de blessure élevé)")
             elif last < 0.8: st.info(f"📉 Ratio actuel {last:.2f} : Sous-charge (Tu peux augmenter)")
             else: st.success(f"✅ Ratio actuel {last:.2f} : Optimal")
 
