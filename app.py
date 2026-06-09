@@ -194,4 +194,28 @@ if uploaded_file is not None:
             st.subheader("❤️ Zones Cardiaques Cibles (Calculées sur FC Max : " + str(fc_max_manuelle) + " bpm)")
             
             df_zones_cardio = pd.DataFrame({
-                "Zone Cardiaque":
+                "Zone Cardiaque": ["Zone 1 - Récupération active / Échauffement", "Zone 2 - Endurance Fondamentale (Lipolyse)", "Zone 3 - Endurance Active / Rythme Marathon", "Zone 4 - Seuil Lactique / Résistance", "Zone 5 - Capacité Anaérobie / Seuil Rouge"],
+                "Pourcentage FC Max": ["50% - 60%", "60% - 75%", "75% - 85%", "85% - 95%", "95% - 100%"],
+                "Plage Cardiaque Cible": [f"{int(fc_max_manuelle*0.50)} - {int(fc_max_manuelle*0.60)} bpm", f"{int(fc_max_manuelle*0.60)} - {int(fc_max_manuelle*0.75)} bpm", f"{int(fc_max_manuelle*0.75)} - {int(fc_max_manuelle*0.85)} bpm", f"{int(fc_max_manuelle*0.85)} - {int(fc_max_manuelle*0.95)} bpm", f"{int(fc_max_manuelle*0.95)} - {fc_max_manuelle} bpm"]
+            })
+            st.dataframe(df_zones_cardio, use_container_width=True, hide_index=True)
+
+        # --- TAB 4 : CARDIO ---
+        with tab4:
+            st.subheader("❤️ Indice d'Efficacité Cardiaque")
+            st.markdown("Ce graphique analyse le coût cardiaque de tes entraînements. Plus la courbe descend, plus ton cœur devient fort et économe.")
+            
+            df_cardio = df[df['Fréquence cardiaque moyenne'].notna() & (df['Fréquence cardiaque moyenne'] > 0)].copy()
+            if not df_cardio.empty:
+                df_cardio['Indice_Cardio'] = df_cardio['Fréquence cardiaque moyenne'] / df_cardio['Vitesse_kmh']
+                df_cardio['Indice_Cardio_Lissé'] = df_cardio['Indice_Cardio'].rolling(window=5, min_periods=1).mean()
+                
+                fig_cardio = px.line(df_cardio, x='Date_Clean', y='Indice_Cardio_Lissé', title="Indice de charge cardiaque (Plus bas = Plus endurant)", color_discrete_sequence=['#EF553B'])
+                st.plotly_chart(fig_cardio, use_container_width=True)
+            else:
+                st.info("Aucune donnée de fréquence cardiaque moyenne n'a été détectée dans ton fichier.")
+
+    except Exception as e:
+        st.error(f"Une erreur est survenue lors de l'analyse : {e}")
+else:
+    st.info("👋 En attente de ton fichier 'activities.csv' dans le volet de gauche.")
