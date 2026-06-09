@@ -75,9 +75,12 @@ if uploaded_file is not None:
         df['Année'] = df['Date_Clean'].dt.year.astype(str)
         df['Mois'] = df['Date_Clean'].dt.to_period('M').astype(str)
         
-        # Ajout des identifiants et libellés trimestriels (ex: 2026-Q2 et T2 2026)
+        # Identifiants trimestriels
         df['Trimestre_Id'] = df['Date_Clean'].dt.year.astype(str) + "-Q" + df['Date_Clean'].dt.quarter.astype(str)
         df['Trimestre'] = "T" + df['Date_Clean'].dt.quarter.astype(str) + " " + df['Date_Clean'].dt.year.astype(str)
+        
+        # Identifiants hebdomadaires (Format: Année - WNuméroDeSemaine)
+        df['Semaine'] = df['Date_Clean'].dt.strftime('%Y-W%V')
 
         # --- STATS PAR AN ---
         stats_an = df.groupby('Année').agg(
@@ -130,7 +133,7 @@ if uploaded_file is not None:
             # Calcul du Chrono Réel Strava
             df_utiles = df[df['Distance_km'] >= (d_cible * 0.95)]
             if not df_utiles.empty:
-                temps_au_prorata = (d_cible / df_utiles['Vitesse_kmh']) * 60
+                temps_au_prorata = (d_cible / df_utiles['Vitesse_kmh'] * 60)
                 chrono_reel_str = mins_to_clock(temps_au_prorata.min())
             else:
                 chrono_reel_str = "Pas de run assez long"
@@ -186,24 +189,37 @@ if uploaded_file is not None:
             with col_table_trim:
                 st.dataframe(stats_trim_affichage, use_container_width=True, hide_index=True)
             with col_graph_trim:
-                # Tri chronologique pour le graphique trimestriel
                 stats_trim_chrono = stats_trim.sort_values('Trimestre_Id')
                 fig_trim = px.bar(stats_trim_chrono, x='Trimestre', y='Distance (km)', labels={'Distance (km)': 'Distance (km)'}, title="Progression trimestrielle (km)", color_discrete_sequence=['#FF8C00'], text_auto='.1f')
                 fig_trim.update_traces(textposition='outside')
                 st.plotly_chart(fig_trim, use_container_width=True)
                 
             st.markdown("---")
-            # Filtre à partir de 2023 pour le graphique mensuel
-            st.subheader("📆 Progression mensuelle (Depuis 2023)")
+            # Filtre des données depuis 2023 pour les vues détaillées (mois & semaines)
             df_recents = df[df['Date_Clean'] >= '2023-01-01'].copy()
             
             if not df_recents.empty:
+                st.subheader("📆 Progression mensuelle (Depuis 2023)")
                 vol_mensuel = df_recents.groupby('Mois')['Distance_km'].sum().reset_index()
                 vol_mensuel['Distance (km)'] = vol_mensuel['Distance_km'].round(1)
                 
                 fig_vol = px.bar(vol_mensuel, x='Mois', y='Distance (km)', labels={'Distance (km)': 'Distance (km)'}, color_discrete_sequence=['#FC4C02'], text_auto='.1f')
                 fig_vol.update_traces(textposition='outside')
                 st.plotly_chart(fig_vol, use_container_width=True)
+                
+                st.markdown("---")
+                # NOUVEAU GRAPHISQUE PAR SEMAINE
+                st.subheader("🗓️ NOUVEAU : Analyse de la charge hebdomadaire (Depuis 2023)")
+                st.markdown("Idéal pour repérer tes blocs de charge réguliers et t'assurer que tu t'accordes bien une semaine d'assimilation plus légère de temps en temps.")
+                
+                vol_semaine = df_recents.groupby('Semaine')['Distance_km'].sum().reset_index()
+                vol_semaine['Distance (km)'] = vol_semaine['Distance_km'].round(1)
+                
+                fig_sem = px.bar(vol_semaine, x='Semaine', y='Distance (km)', labels={'Distance (km)': 'Distance (km)'}, title="Volume hebdomadaire (km / semaine)", color_discrete_sequence=['#20B2AA'], text_auto='.1f')
+                fig_sem.update_traces(textposition='outside')
+                # Optimisation de l'affichage de l'axe X pour éviter que les étiquettes se chevauchent trop
+                fig_sem.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_sem, use_container_width=True)
             else:
                 st.info("Aucune activité trouvée depuis le 01/01/2023.")
 
@@ -222,6 +238,7 @@ if uploaded_file is not None:
             all_ef_min = 60 / (vma_manuelle * 0.70)
             all_marathon_max = 60 / (vma_manuelle * 0.75)
             all_marathon_min = 60 / (vma_manuelle * 0.80)
+            
             all_seuil_max = 60 / (vma_manuelle * 0.83)
             all_seuil_min = 60 / (vma_manuelle * 0.87)
             all_vma_max = 60 / (vma_manuelle * 0.95)
